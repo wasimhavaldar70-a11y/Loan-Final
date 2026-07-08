@@ -225,8 +225,13 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onToggleSi
           }
 
           if (authData.user) {
-            // Check if email matches Super Admin email directly
-            if (authData.user.email === 'admin@suvarnaloan.com' || authData.user.email === 'superadmin@suvarnaloan.com') {
+            // Check if email matches Super Admin email directly or user metadata contains superadmin role
+            if (
+              authData.user.email === 'admin@suvarnaloan.com' || 
+              authData.user.email === 'superadmin@suvarnaloan.com' ||
+              authData.user.user_metadata?.role === 'superadmin' ||
+              authData.user.user_metadata?.is_superadmin === true
+            ) {
               onLoginSuccess('superadmin');
               onClose();
               setPassword('');
