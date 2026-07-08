@@ -209,6 +209,7 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onToggleSi
             if (
               (inputUser === 'admin@suvarnaloan.com' || 
                inputUser === 'superadmin' || 
+               inputUser === 'wasimhavaldar70@gmail.com' ||
                inputUser === 'superadmin@suvarnaloan.com') && 
               password === 'superadmin123'
             ) {
@@ -229,6 +230,7 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onToggleSi
             if (
               authData.user.email === 'admin@suvarnaloan.com' || 
               authData.user.email === 'superadmin@suvarnaloan.com' ||
+              authData.user.email === 'wasimhavaldar70@gmail.com' ||
               authData.user.user_metadata?.role === 'superadmin' ||
               authData.user.user_metadata?.is_superadmin === true
             ) {
