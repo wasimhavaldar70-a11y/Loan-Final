@@ -29,6 +29,28 @@ export default function LiveToastHub() {
   // AudioContext reference
   const audioCtxRef = useRef<AudioContext | null>(null);
 
+  // Keep references to prevent stale closures in event listeners/intervals
+  const soundEnabledRef = useRef(soundEnabled);
+  const volumeRef = useRef(volume);
+  const selectedPresetRef = useRef(selectedPreset);
+  const mutedRef = useRef(muted);
+
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    volumeRef.current = volume;
+  }, [volume]);
+
+  useEffect(() => {
+    selectedPresetRef.current = selectedPreset;
+  }, [selectedPreset]);
+
+  useEffect(() => {
+    mutedRef.current = muted;
+  }, [muted]);
+
   // Function to initialize AudioContext lazily on user interaction
   const getAudioContext = (): AudioContext => {
     if (!audioCtxRef.current) {
@@ -40,8 +62,9 @@ export default function LiveToastHub() {
   };
 
   // Dynamic Web Audio Synth sound generator
-  const playSynthesizedSound = (preset: SoundPreset = selectedPreset) => {
-    if (!soundEnabled || muted) return;
+  const playSynthesizedSound = (preset?: SoundPreset) => {
+    const activePreset = preset || selectedPresetRef.current;
+    if (!soundEnabledRef.current || mutedRef.current) return;
 
     try {
       const ctx = getAudioContext();
@@ -53,9 +76,9 @@ export default function LiveToastHub() {
       const gainNode = ctx.createGain();
       gainNode.connect(ctx.destination);
       gainNode.gain.setValueAtTime(0, now);
-      gainNode.gain.linearRampToValueAtTime(volume, now + 0.01);
+      gainNode.gain.linearRampToValueAtTime(volumeRef.current, now + 0.01);
 
-      if (preset === 'suvarna_chime') {
+      if (activePreset === 'suvarna_chime') {
         // A luxurious rich gold bell sound (harmonic blend)
         const osc1 = ctx.createOscillator();
         const osc2 = ctx.createOscillator();
@@ -85,7 +108,7 @@ export default function LiveToastHub() {
         osc2.stop(now + 1.2);
         osc3.stop(now + 1.2);
 
-      } else if (preset === 'digital_bell') {
+      } else if (activePreset === 'digital_bell') {
         // High-pitched crystal clear digital chime
         const osc = ctx.createOscillator();
         osc.type = 'sine';
@@ -97,7 +120,7 @@ export default function LiveToastHub() {
         osc.start(now);
         osc.stop(now + 0.6);
 
-      } else if (preset === 'ambient_bloom') {
+      } else if (activePreset === 'ambient_bloom') {
         // Soft cinematic rising sweep
         const osc = ctx.createOscillator();
         osc.type = 'triangle';
@@ -110,7 +133,7 @@ export default function LiveToastHub() {
         osc.start(now);
         osc.stop(now + 0.8);
 
-      } else if (preset === 'soft_click') {
+      } else if (activePreset === 'soft_click') {
         // Tactile organic wooden pop
         const osc = ctx.createOscillator();
         osc.type = 'sine';
@@ -155,7 +178,7 @@ export default function LiveToastHub() {
     return () => {
       window.removeEventListener('triggerSuvarnaToast', handleTriggerToast);
     };
-  }, [soundEnabled, volume, selectedPreset, muted]);
+  }, []); // Run once to attach single global listener
 
   // Periodic random background simulated events to showcase the Live Toast Engine
   useEffect(() => {
