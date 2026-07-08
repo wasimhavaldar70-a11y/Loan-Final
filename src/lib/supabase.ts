@@ -1,18 +1,19 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { Database } from '../types';
 
 const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
 
 export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey);
 
-let supabaseInstance: any = null;
+let supabaseInstance: SupabaseClient<Database> | null = null;
 
-export function getSupabase(): any {
+export function getSupabase(): SupabaseClient<Database> | null {
   if (!isSupabaseConfigured) {
     return null;
   }
   if (!supabaseInstance) {
-    supabaseInstance = createClient(supabaseUrl, supabaseAnonKey);
+    supabaseInstance = createClient<Database>(supabaseUrl, supabaseAnonKey);
   }
   return supabaseInstance;
 }

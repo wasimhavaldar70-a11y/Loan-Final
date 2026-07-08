@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Lock, Shield, Eye, EyeOff, Check, AlertCircle, X, Terminal, ArrowRight } from 'lucide-react';
+import { getSupabase, isSupabaseConfigured } from '../lib/supabase';
+import { hashSHA256 } from '../utils/auth';
 
 export interface ShopOwner {
   id: string;
@@ -8,8 +10,8 @@ export interface ShopOwner {
   shopName: string;
   email: string;
   phone: string;
-  pin: string;
-  password?: string;
+  pin: string; // Stored as SHA-256 hash in offline mode or DB
+  password?: string; // Stored as SHA-256 hash in offline mode
   plan: 'Standard' | 'Premium Enterprise' | 'Sovereign Pro';
   status: 'Active' | 'Suspended';
   dateJoined: string;
@@ -25,14 +27,14 @@ interface LoginModalProps {
   onToggleSignUp?: () => void;
 }
 
-const DEFAULT_SHOP_OWNERS: ShopOwner[] = [
+export const DEFAULT_SHOP_OWNERS: ShopOwner[] = [
   {
     id: 'owner-1',
     ownerName: 'Rajesh Verma',
     shopName: 'Suvarna Gold Loan & Jewellery Co.',
     email: 'rajesh@suvarnaloan.com',
     phone: '+91 70585 36371',
-    pin: '1234',
+    pin: '1234', // Raw PIN for display/reference, but will be hashed when saved/read
     password: 'owner123',
     plan: 'Sovereign Pro',
     status: 'Active',
@@ -68,12 +70,22 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onToggleSi
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [shake, setShake] = useState<boolean>(false);
 
-  // Get active list from local storage
-  const getShopOwners = (): ShopOwner[] => {
+  // Get active list from local storage with pre-hashed keys if first time
+  const getShopOwners = async (): Promise<ShopOwner[]> => {
     const stored = localStorage.getItem('suvarna_shop_owners');
     if (!stored) {
-      localStorage.setItem('suvarna_shop_owners', JSON.stringify(DEFAULT_SHOP_OWNERS));
-      return DEFAULT_SHOP_OWNERS;
+      // Hash pins and passwords before saving
+      const hash1234 = await hashSHA256('1234');
+      const hashOwner123 = await hashSHA256('owner123');
+      const hash5678 = await hashSHA256('5678');
+      const hashPriya123 = await hashSHA256('priya123');
+
+      const defaultOwners: ShopOwner[] = [
+        { ...DEFAULT_SHOP_OWNERS[0], pin: hash1234, password: hashOwner123 },
+        { ...DEFAULT_SHOP_OWNERS[1], pin: hash5678, password: hashPriya123 }
+      ];
+      localStorage.setItem('suvarna_shop_owners', JSON.stringify(defaultOwners));
+      return defaultOwners;
     }
     return JSON.parse(stored);
   };
@@ -94,31 +106,57 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onToggleSi
     setTimeout(() => setShake(false), 500);
   };
 
-  const handleSubmit = (e?: React.FormEvent) => {
+  const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setIsSubmitting(true);
     setError('');
 
-    const owners = getShopOwners();
+    const supabase = getSupabase() as any;
+    const isOnline = isSupabaseConfigured && supabase !== null;
 
-    // Simulate API authorization delay
-    setTimeout(() => {
+    try {
       if (loginMethod === 'pin') {
-        // Super Admin PIN check
-        if (pin === '9999') {
-          onLoginSuccess('superadmin');
-          onClose();
-          setPin('');
-        } else {
-          // Check regular shop owners
-          const matchedOwner = owners.find(o => o.pin === pin);
+        const inputPinHash = await hashSHA256(pin);
+        const superadminPinHash = await hashSHA256('9999');
+
+        if (isOnline) {
+          // 1. Check Superadmin PIN
+          if (pin === '9999') {
+            onLoginSuccess('superadmin');
+            onClose();
+            setPin('');
+            setIsSubmitting(false);
+            return;
+          }
+
+          // 2. Check Database for matching PIN
+          const { data: matchedOwner, error: dbError } = await supabase
+            .from('shop_owners')
+            .select('*')
+            .eq('pin', inputPinHash)
+            .maybeSingle();
+
+          if (dbError) throw dbError;
+
           if (matchedOwner) {
             if (matchedOwner.status === 'Suspended') {
               setError('This Shop Owner account has been suspended by Super Admin.');
               triggerShake();
               setPin('');
             } else {
-              onLoginSuccess('owner', matchedOwner);
+              // Convert DB fields to UI ShopOwner camelCase structure
+              const ownerData: ShopOwner = {
+                id: matchedOwner.id,
+                ownerName: matchedOwner.owner_name,
+                shopName: matchedOwner.shop_name,
+                email: matchedOwner.email,
+                phone: matchedOwner.phone,
+                pin: matchedOwner.pin,
+                plan: matchedOwner.plan as any,
+                status: matchedOwner.status as any,
+                dateJoined: matchedOwner.date_joined
+              };
+              onLoginSuccess('owner', ownerData);
               onClose();
               setPin('');
             }
@@ -127,38 +165,144 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onToggleSi
             triggerShake();
             setPin('');
           }
+
+        } else {
+          // Offline LocalStorage Fallback
+          const owners = await getShopOwners();
+          if (pin === '9999') {
+            onLoginSuccess('superadmin');
+            onClose();
+            setPin('');
+          } else {
+            const matchedOwner = owners.find(o => o.pin === inputPinHash);
+            if (matchedOwner) {
+              if (matchedOwner.status === 'Suspended') {
+                setError('This Shop Owner account has been suspended by Super Admin.');
+                triggerShake();
+                setPin('');
+              } else {
+                onLoginSuccess('owner', matchedOwner);
+                onClose();
+                setPin('');
+              }
+            } else {
+              setError('Invalid Security PIN. Please try again.');
+              triggerShake();
+              setPin('');
+            }
+          }
         }
       } else {
         const inputUser = username.trim().toLowerCase();
-        // Super Admin credentials
-        if (inputUser === 'superadmin' && password === 'superadmin123') {
-          onLoginSuccess('superadmin');
-          onClose();
-          setPassword('');
-        } else {
-          // Check shop owners credentials
-          const matchedOwner = owners.find(o => 
-            (o.email.toLowerCase() === inputUser || o.ownerName.toLowerCase() === inputUser) && 
-            o.password === password
-          );
+        const inputPasswordHash = await hashSHA256(password);
+        const superadminPassHash = await hashSHA256('superadmin123');
 
-          if (matchedOwner) {
-            if (matchedOwner.status === 'Suspended') {
-              setError('This Shop Owner account has been suspended by Super Admin.');
-              triggerShake();
+        if (isOnline) {
+          // Use Supabase Auth to authenticate credentials securely
+          const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+            email: inputUser,
+            password: password
+          });
+
+          if (authError) {
+            // Check if Super Admin login credentials match
+            if (inputUser === 'admin@suvarnaloan.com' && password === 'superadmin123') {
+              onLoginSuccess('superadmin');
+              onClose();
+              setPassword('');
+              setIsSubmitting(false);
+              return;
+            }
+            setError(authError.message || 'Authentication failed.');
+            triggerShake();
+            setIsSubmitting(false);
+            return;
+          }
+
+          if (authData.user) {
+            // Check if email matches Super Admin email directly
+            if (authData.user.email === 'admin@suvarnaloan.com' || authData.user.email === 'superadmin@suvarnaloan.com') {
+              onLoginSuccess('superadmin');
+              onClose();
+              setPassword('');
+              setIsSubmitting(false);
+              return;
+            }
+
+            // Retrieve Shop Owner profile from database table
+            const { data: matchedOwner, error: profileError } = await supabase
+              .from('shop_owners')
+              .select('*')
+              .eq('email', authData.user.email)
+              .maybeSingle();
+
+            if (profileError) throw profileError;
+
+            if (matchedOwner) {
+              if (matchedOwner.status === 'Suspended') {
+                // Log out of auth session since suspended
+                await supabase.auth.signOut();
+                setError('This Shop Owner account has been suspended by Super Admin.');
+                triggerShake();
+              } else {
+                const ownerData: ShopOwner = {
+                  id: matchedOwner.id,
+                  ownerName: matchedOwner.owner_name,
+                  shopName: matchedOwner.shop_name,
+                  email: matchedOwner.email,
+                  phone: matchedOwner.phone,
+                  pin: matchedOwner.pin,
+                  plan: matchedOwner.plan as any,
+                  status: matchedOwner.status as any,
+                  dateJoined: matchedOwner.date_joined
+                };
+                onLoginSuccess('owner', ownerData);
+                onClose();
+                setPassword('');
+              }
             } else {
-              onLoginSuccess('owner', matchedOwner);
+              // Logged in via Auth but no record in shop_owners table -> fallback to superadmin or custom tenant
+              onLoginSuccess('superadmin');
               onClose();
               setPassword('');
             }
+          }
+        } else {
+          // Offline LocalStorage Fallback (hashed verification)
+          const owners = await getShopOwners();
+          if (inputUser === 'superadmin' && password === 'superadmin123') {
+            onLoginSuccess('superadmin');
+            onClose();
+            setPassword('');
           } else {
-            setError('Incorrect Username/Email or Password.');
-            triggerShake();
+            const matchedOwner = owners.find(o => 
+              (o.email.toLowerCase() === inputUser || o.ownerName.toLowerCase() === inputUser) && 
+              o.password === inputPasswordHash
+            );
+
+            if (matchedOwner) {
+              if (matchedOwner.status === 'Suspended') {
+                setError('This Shop Owner account has been suspended by Super Admin.');
+                triggerShake();
+              } else {
+                onLoginSuccess('owner', matchedOwner);
+                onClose();
+                setPassword('');
+              }
+            } else {
+              setError('Incorrect Username/Email or Password.');
+              triggerShake();
+            }
           }
         }
       }
+    } catch (err: any) {
+      console.error('Authentication gateway error:', err);
+      setError(err.message || 'An unexpected connection error occurred.');
+      triggerShake();
+    } finally {
       setIsSubmitting(false);
-    }, 800);
+    }
   };
 
   if (!isOpen) return null;

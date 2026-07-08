@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Home, Mail, Phone, Lock, Sparkles, Check, AlertCircle, X, ArrowRight, Shield } from 'lucide-react';
-import { ShopOwner } from './LoginModal';
+import { ShopOwner, DEFAULT_SHOP_OWNERS } from './LoginModal';
+import { getSupabase, isSupabaseConfigured } from '../lib/supabase';
+import { hashSHA256 } from '../utils/auth';
 
 interface SignUpModalProps {
   isOpen: boolean;
@@ -54,41 +56,17 @@ export default function SignUpModal({ isOpen, onClose, onSignUpSuccess }: SignUp
     setTimeout(() => setShake(false), 500);
   };
 
-  const getShopOwners = (): ShopOwner[] => {
+  const getShopOwners = async (): Promise<ShopOwner[]> => {
     const stored = localStorage.getItem('suvarna_shop_owners');
     if (!stored) {
-      // Import the default list if empty
+      const hash1234 = await hashSHA256('1234');
+      const hashOwner123 = await hashSHA256('owner123');
+      const hash5678 = await hashSHA256('5678');
+      const hashPriya123 = await hashSHA256('priya123');
+
       const defaultOwners: ShopOwner[] = [
-        {
-          id: 'owner-1',
-          ownerName: 'Rajesh Verma',
-          shopName: 'Suvarna Gold Loan & Jewellery Co.',
-          email: 'rajesh@suvarnaloan.com',
-          phone: '+91 70585 36371',
-          pin: '1234',
-          password: 'owner123',
-          plan: 'Sovereign Pro',
-          status: 'Active',
-          dateJoined: '12 Jan 2026',
-          loansCount: 12,
-          totalPledgedGold: '284.5 gm',
-          outstandingAmount: 1450000
-        },
-        {
-          id: 'owner-2',
-          ownerName: 'Priya Sharma',
-          shopName: 'Sharma Bullion & Gold Loans',
-          email: 'priya@sharmabullion.com',
-          phone: '+91 98765 43210',
-          pin: '5678',
-          password: 'priya123',
-          plan: 'Standard',
-          status: 'Active',
-          dateJoined: '04 Mar 2026',
-          loansCount: 4,
-          totalPledgedGold: '92.3 gm',
-          outstandingAmount: 480000
-        }
+        { ...DEFAULT_SHOP_OWNERS[0], pin: hash1234, password: hashOwner123 },
+        { ...DEFAULT_SHOP_OWNERS[1], pin: hash5678, password: hashPriya123 }
       ];
       localStorage.setItem('suvarna_shop_owners', JSON.stringify(defaultOwners));
       return defaultOwners;
@@ -104,7 +82,7 @@ export default function SignUpModal({ isOpen, onClose, onSignUpSuccess }: SignUp
     return null;
   };
 
-  const handleNextStep = () => {
+  const handleNextStep = async () => {
     setError('');
     const step1Error = validateStep1();
     if (step1Error) {
@@ -113,27 +91,65 @@ export default function SignUpModal({ isOpen, onClose, onSignUpSuccess }: SignUp
       return;
     }
 
-    // Check duplicate email or shop name
-    const owners = getShopOwners();
-    const duplicateEmail = owners.some(o => o.email.toLowerCase() === email.trim().toLowerCase());
-    const duplicateShop = owners.some(o => o.shopName.toLowerCase() === shopName.trim().toLowerCase());
+    const supabase = getSupabase() as any;
+    const isOnline = isSupabaseConfigured && supabase !== null;
 
-    if (duplicateEmail) {
-      setError('A shop owner is already registered with this email address.');
+    try {
+      if (isOnline) {
+        // Database checks for duplicates
+        const { data: emailDup, error: emailErr } = await supabase
+          .from('shop_owners')
+          .select('id')
+          .eq('email', email.trim().toLowerCase())
+          .maybeSingle();
+
+        if (emailErr) throw emailErr;
+        if (emailDup) {
+          setError('A shop owner is already registered with this email address.');
+          triggerShake();
+          return;
+        }
+
+        const { data: shopDup, error: shopErr } = await supabase
+          .from('shop_owners')
+          .select('id')
+          .eq('shop_name', shopName.trim())
+          .maybeSingle();
+
+        if (shopErr) throw shopErr;
+        if (shopDup) {
+          setError('A jewelry shop is already registered with this name.');
+          triggerShake();
+          return;
+        }
+      } else {
+        // Offline check
+        const owners = await getShopOwners();
+        const duplicateEmail = owners.some(o => o.email.toLowerCase() === email.trim().toLowerCase());
+        const duplicateShop = owners.some(o => o.shopName.toLowerCase() === shopName.trim().toLowerCase());
+
+        if (duplicateEmail) {
+          setError('A shop owner is already registered with this email address.');
+          triggerShake();
+          return;
+        }
+
+        if (duplicateShop) {
+          setError('A jewelry shop is already registered with this name.');
+          triggerShake();
+          return;
+        }
+      }
+
+      setStep(2);
+    } catch (err: any) {
+      console.error('Validation query failed:', err);
+      setError(err.message || 'Connection error. Please try again.');
       triggerShake();
-      return;
     }
-
-    if (duplicateShop) {
-      setError('A jewelry shop is already registered with this name.');
-      triggerShake();
-      return;
-    }
-
-    setStep(2);
   };
 
-  const handleSignUp = (e: React.FormEvent) => {
+  const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -151,21 +167,67 @@ export default function SignUpModal({ isOpen, onClose, onSignUpSuccess }: SignUp
 
     setIsSubmitting(true);
 
-    setTimeout(() => {
-      try {
-        const owners = getShopOwners();
-        
-        // Double check pin unique
-        if (owners.some(o => o.pin === pin)) {
+    const supabase = getSupabase() as any;
+    const isOnline = isSupabaseConfigured && supabase !== null;
+
+    try {
+      const hashedPin = await hashSHA256(pin);
+      const hashedPassword = await hashSHA256(password);
+
+      const date = new Date();
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const formattedDate = `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+
+      if (isOnline) {
+        // 1. Sign up user using Supabase Auth
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email: email.trim().toLowerCase(),
+          password: password // Supabase Auth requires raw password (it hashes it internally on their side)
+        });
+
+        if (authError) throw authError;
+
+        if (authData.user) {
+          // 2. Create the associated profile inside the shop_owners table
+          const { error: dbError } = await supabase.from('shop_owners').insert({
+            id: authData.user.id,
+            owner_name: ownerName.trim(),
+            shop_name: shopName.trim(),
+            email: email.trim().toLowerCase(),
+            phone: phone.trim(),
+            pin: hashedPin,
+            password: hashedPassword, // secure hashed password as backup/offline reference
+            plan: selectedPlan,
+            status: 'Active',
+            date_joined: formattedDate
+          });
+
+          if (dbError) throw dbError;
+
+          const newOwner: ShopOwner = {
+            id: authData.user.id,
+            ownerName: ownerName.trim(),
+            shopName: shopName.trim(),
+            email: email.trim().toLowerCase(),
+            phone: phone.trim(),
+            pin: hashedPin,
+            plan: selectedPlan,
+            status: 'Active',
+            dateJoined: formattedDate
+          };
+
+          onSignUpSuccess(newOwner);
+          onClose();
+        }
+      } else {
+        // Offline verification flow
+        const owners = await getShopOwners();
+        if (owners.some(o => o.pin === hashedPin)) {
           setError('This 4-digit PIN is already chosen. Please select a different PIN.');
           triggerShake();
           setIsSubmitting(false);
           return;
         }
-
-        const date = new Date();
-        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        const formattedDate = `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
 
         const newOwner: ShopOwner = {
           id: `owner-${Date.now()}`,
@@ -173,8 +235,8 @@ export default function SignUpModal({ isOpen, onClose, onSignUpSuccess }: SignUp
           shopName: shopName.trim(),
           email: email.trim().toLowerCase(),
           phone: phone.trim(),
-          pin,
-          password,
+          pin: hashedPin,
+          password: hashedPassword,
           plan: selectedPlan,
           status: 'Active',
           dateJoined: formattedDate,
@@ -188,23 +250,25 @@ export default function SignUpModal({ isOpen, onClose, onSignUpSuccess }: SignUp
 
         onSignUpSuccess(newOwner);
         onClose();
-        
-        // Reset states
-        setStep(1);
-        setOwnerName('');
-        setShopName('');
-        setEmail('');
-        setPhone('');
-        setPin('');
-        setPassword('');
-        setSelectedPlan('Sovereign Pro');
-      } catch (err) {
-        setError('Failed to create account. Please try again.');
-        triggerShake();
-      } finally {
-        setIsSubmitting(false);
       }
-    }, 1200);
+
+      // Reset Form States
+      setStep(1);
+      setOwnerName('');
+      setShopName('');
+      setEmail('');
+      setPhone('');
+      setPin('');
+      setPassword('');
+      setSelectedPlan('Sovereign Pro');
+
+    } catch (err: any) {
+      console.error('Signup process failed:', err);
+      setError(err.message || 'Failed to create account. Please try again.');
+      triggerShake();
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
