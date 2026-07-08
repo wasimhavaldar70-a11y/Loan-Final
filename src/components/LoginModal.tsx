@@ -282,7 +282,12 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onToggleSi
         } else {
           // Offline LocalStorage Fallback (hashed verification)
           const owners = await getShopOwners();
-          if (inputUser === 'superadmin' && password === 'superadmin123') {
+          if (
+            (inputUser === 'superadmin' || 
+             inputUser === 'wasimhavaldar70@gmail.com' || 
+             inputUser === 'admin@suvarnaloan.com') && 
+            password === 'superadmin123'
+          ) {
             onLoginSuccess('superadmin');
             onClose();
             setPassword('');
