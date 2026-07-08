@@ -206,7 +206,12 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onToggleSi
 
           if (authError) {
             // Check if Super Admin login credentials match
-            if (inputUser === 'admin@suvarnaloan.com' && password === 'superadmin123') {
+            if (
+              (inputUser === 'admin@suvarnaloan.com' || 
+               inputUser === 'superadmin' || 
+               inputUser === 'superadmin@suvarnaloan.com') && 
+              password === 'superadmin123'
+            ) {
               onLoginSuccess('superadmin');
               onClose();
               setPassword('');
